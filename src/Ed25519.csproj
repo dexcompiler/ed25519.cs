@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Multi-targeting for broader compatibility -->
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <LangVersion>preview</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>Ed25519</RootNamespace>
+    <AssemblyName>Ed25519</AssemblyName>
+    <OutputType>Library</OutputType>
+    
+    <!-- NuGet Package metadata -->
+    <PackageId>Ed25519</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Dexter Ajoku</Authors>
+    <Description>Pure C# implementation of Ed25519 digital signatures. RFC 8032 compliant, ported from ref10 reference implementation. Includes PKCS#8/SPKI/PEM key import/export.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageTags>ed25519;cryptography;signatures;elliptic-curve;digital-signature;pkcs8;pem</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/dexcompiler/ed25519.cs</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    
+    <!-- Documentation -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn> <!-- Don't warn on missing XML docs for now -->
+    
+    <!-- Symbols for debugging -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    
+    <!-- Performance -->
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>
