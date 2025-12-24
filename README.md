@@ -1,6 +1,6 @@
 # Ed25519
 
-A pure C# implementation of the Ed25519 digital signature algorithm, ported from the [ref10 reference implementation](https://ed25519.cr.yp.to/).
+A pure C# implementation of the Ed25519 digital signature algorithm, ported from the [ref10 reference implementation](https://ed25519.cr.yp.to/) and the improved C port by Orson Peters here: https://github.com/orlp/ed25519.
 
 ## Features
 
