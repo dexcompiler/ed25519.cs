@@ -18,8 +18,8 @@ internal static partial class GePrecompTables
     /// Bi[i] = (2i+1)*B for i = 0..7
     /// Used in double scalar multiplication for verification.
     /// </summary>
-    internal static readonly GePrecomp[] Bi = new GePrecomp[8]
-    {
+    internal static readonly GePrecomp[] Bi =
+    [
         // Bi[0] = 1*B
         new GePrecomp
         {
@@ -76,8 +76,5 @@ internal static partial class GePrecompTables
             YMinusX = new Fe { H0 = -24326370, H1 = 15950226, H2 = -31801215, H3 = -14592823, H4 = -11662737, H5 = -5090925, H6 = 1573892, H7 = -2625887, H8 = 2198790, H9 = -15804619 },
             Xy2d = new Fe { H0 = -3099351, H1 = 10324967, H2 = -2241613, H3 = 7453183, H4 = -5446979, H5 = -2735503, H6 = -13812022, H7 = -16236442, H8 = -32461234, H9 = -12290683 },
         },
-    };
-
-    // Base table is defined in GePrecompTables.Generated.cs (partial class)
+    ];
 }
-
