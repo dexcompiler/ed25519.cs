@@ -1,6 +1,6 @@
 # Ed25519
 
-A pure C# implementation of the Ed25519 digital signature algorithm, ported from the [ref10 reference implementation](https://ed25519.cr.yp.to/) and the improved C port by Orson Peters here: https://github.com/orlp/ed25519.
+A pure C# implementation of the Ed25519 digital signature algorithm, ported from the [ref10 reference implementation](https://ed25519.cr.yp.to/) and the improved C port by Orson Peters ([`orlp/ed25519`](https://github.com/orlp/ed25519)).
 
 ## Features
 
@@ -33,6 +33,23 @@ RandomNumberGenerator.Fill(seed);
 Ed25519.CreateKeypair(publicKey, privateKey, seed);
 ```
 
+### Key Material (important)
+
+- **Seed (32 bytes)**: the secret input to RFC 8032 key generation. This library’s PKCS#8 helpers encode/decode the **seed**.
+- **Public key (32 bytes)**: the encoded curve point.
+- **Private key (64 bytes)**: this library’s “expanded” private key, derived as `SHA-512(seed)` and stored as:
+  - `privateKey[0..31]`: clamped scalar
+  - `privateKey[32..63]`: prefix
+
+`Ed25519.Sign(...)` expects the **expanded 64-byte private key** (and optionally the public key).
+
+### API Notes
+
+- **Deterministic signatures**: Ed25519 signing is deterministic for a given (expanded) private key and message (no external randomness needed).
+- **Constant-time vs variable-time**:
+  - Signing uses constant-time building blocks (`CMov`, etc.).
+  - Verification uses variable-time operations (inputs are public).
+
 ### Sign a Message
 
 ```csharp
@@ -48,34 +65,37 @@ Ed25519.Sign(signature, message, privateKey);
 bool isValid = Ed25519.Verify(signature, message, publicKey);
 ```
 
-### Import/Export Keys (PKCS#8 and SPKI)
+### Import/Export Keys (PKCS#8 and SPKI / RFC 8410)
 
 ```csharp
-// Export private key to PKCS#8
-byte[] pkcs8 = Pkcs.ExportPkcs8PrivateKey(privateKey);
+// Export private key seed to PKCS#8 (DER)
+byte[] pkcs8 = Pkcs.EncodePkcs8PrivateKey(seed);
 
-// Import private key from PKCS#8
+// Import seed from PKCS#8 (DER)
+byte[] importedSeed = Pkcs.DecodePkcs8PrivateKey(pkcs8);
+
+// Re-expand to this library's 64-byte private key format (and compute public key)
 Span<byte> importedPrivateKey = stackalloc byte[64];
 Span<byte> importedPublicKey = stackalloc byte[32];
-Pkcs.ImportPkcs8PrivateKey(pkcs8, importedPrivateKey, importedPublicKey);
+Ed25519.CreateKeypair(importedPublicKey, importedPrivateKey, importedSeed);
 
-// Export public key to SPKI
-byte[] spki = Pkcs.ExportSubjectPublicKeyInfo(publicKey);
+// Export public key to SPKI (DER)
+byte[] spki = Pkcs.EncodeSubjectPublicKeyInfo(publicKey);
 
-// Import public key from SPKI
-Span<byte> importedPubKey = stackalloc byte[32];
-Pkcs.ImportSubjectPublicKeyInfo(spki, importedPubKey);
+// Import public key from SPKI (DER)
+byte[] importedPubKey = Pkcs.DecodeSubjectPublicKeyInfo(spki);
 ```
 
 ### PEM Format
 
 ```csharp
 // Export to PEM
-string privatePem = Pkcs.ExportPkcs8PrivateKeyPem(privateKey);
-string publicPem = Pkcs.ExportSubjectPublicKeyInfoPem(publicKey);
+string privatePem = Pkcs.ExportPrivateKeyPem(seed);      // "PRIVATE KEY" (PKCS#8)
+string publicPem = Pkcs.ExportPublicKeyPem(publicKey);   // "PUBLIC KEY" (SPKI)
 
-// Import from PEM
-Pkcs.ImportFromPem(privatePem, out byte[] importedKey, out bool isPrivate);
+// Import from PEM (example: private key)
+byte[] privateDer = Pkcs.DecodePem(privatePem, "PRIVATE KEY");
+byte[] importedSeed = Pkcs.DecodePkcs8PrivateKey(privateDer);
 ```
 
 ## Building Self-Signed Certificates
@@ -86,6 +106,14 @@ While Ed25519 keys can be used for signing, .NET's `X509Certificate2` has limite
 2. Manually construct the TBS (To-Be-Signed) certificate structure
 3. Sign it with `Ed25519.Sign()`
 4. Encode the final certificate in DER/PEM format
+
+If your goal is *certificate issuance*, this repo includes **CSR (PKCS#10) helpers** in `Pkcs`:
+
+- `Pkcs.EncodePkcs10CertificationRequest(...)` (DER)
+- `Pkcs.ExportCsrPem(...)` (PEM)
+- `Pkcs.VerifyPkcs10CertificationRequest(...)`
+
+It also supports exporting **encrypted** PKCS#8 PEM (`"ENCRYPTED PRIVATE KEY"`) via `Pkcs.ExportEncryptedPrivateKeyPem(...)`.
 
 ## Implementation Notes
 
