@@ -125,12 +125,43 @@ public static class Ed25519
     }
 
     /// <summary>
+    /// Sign a message with an expanded 64-byte private key (scalar||prefix).
+    /// The public key is derived from the private scalar.
+    /// </summary>
+    /// <param name="signature">Output: 64-byte signature.</param>
+    /// <param name="message">The message to sign.</param>
+    /// <param name="privateKey">The 64-byte private key (expanded key: scalar||prefix).</param>
+    public static void Sign(Span<byte> signature, ReadOnlySpan<byte> message, ReadOnlySpan<byte> privateKey)
+    {
+        if (privateKey.Length < PrivateKeySize)
+            throw new ArgumentException($"Private key buffer must be at least {PrivateKeySize} bytes", nameof(privateKey));
+
+        // Derive public key: A = [scalar] * B
+        Span<byte> publicKey = stackalloc byte[PublicKeySize];
+        Ge.ScalarMultBase(out GeP3 A, privateKey[..32]);
+        Ge.P3ToBytes(publicKey, in A);
+
+        Sign(signature, message, publicKey, privateKey);
+    }
+
+    /// <summary>
     /// Sign a message and return the signature as a new array.
     /// </summary>
     public static byte[] Sign(ReadOnlySpan<byte> message, ReadOnlySpan<byte> publicKey, ReadOnlySpan<byte> privateKey)
     {
         var signature = new byte[SignatureSize];
         Sign(signature, message, publicKey, privateKey);
+        return signature;
+    }
+
+    /// <summary>
+    /// Sign a message with an expanded 64-byte private key (scalar||prefix) and return the signature.
+    /// </summary>
+    public static byte[] Sign(ReadOnlySpan<byte> message, ReadOnlySpan<byte> privateKey)
+    {
+        var signature = new byte[SignatureSize];
+        // Disambiguate overload: this must call Sign(Span<byte> signature, ..., ReadOnlySpan<byte> privateKey)
+        Sign(signature.AsSpan(), message, privateKey);
         return signature;
     }
 
