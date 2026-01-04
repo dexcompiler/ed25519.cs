@@ -7,6 +7,9 @@
 
 using System.Buffers.Binary;
 using System.Text;
+using System.Formats.Asn1;
+using System.Security.Cryptography;
+using System.Security.Cryptography.Pkcs;
 
 namespace Ed25519;
 
@@ -363,6 +366,200 @@ public static class Pkcs
     {
         byte[] der = EncodePkcs8PrivateKeyWithPublicKey(seed, publicKey);
         return EncodePem("PRIVATE KEY", der);
+    }
+
+    /// <summary>
+    /// Export an encrypted private key as PKCS#8 EncryptedPrivateKeyInfo PEM ("ENCRYPTED PRIVATE KEY").
+    /// </summary>
+    /// <remarks>
+    /// Uses PBES2 + PBKDF2(HMAC-SHA256) + AES-256-CBC.
+    /// </remarks>
+    public static string ExportEncryptedPrivateKeyPem(
+        ReadOnlySpan<byte> seed,
+        ReadOnlySpan<byte> publicKey,
+        ReadOnlySpan<char> password,
+        int iterations = 100_000)
+    {
+        if (password.IsEmpty)
+            throw new ArgumentException("Password must not be empty", nameof(password));
+        if (iterations <= 0)
+            throw new ArgumentOutOfRangeException(nameof(iterations), "Iterations must be > 0");
+        if (seed.Length != Ed25519.SeedSize)
+            throw new ArgumentException($"Seed must be {Ed25519.SeedSize} bytes", nameof(seed));
+        if (publicKey.Length != Ed25519.PublicKeySize)
+            throw new ArgumentException($"Public key must be {Ed25519.PublicKeySize} bytes", nameof(publicKey));
+
+        // Use PKCS#8 PrivateKeyInfo (version 0, no publicKey field) for widest compatibility
+        // with downstream PKCS#8 parsing/encryption APIs.
+        byte[] pkcs8 = EncodePkcs8PrivateKey(seed);
+
+        // Decode PKCS#8 to a Pkcs8PrivateKeyInfo, then encrypt to EncryptedPrivateKeyInfo.
+        // This avoids having to implement PBES2 ASN.1 ourselves.
+        var info = Pkcs8PrivateKeyInfo.Decode(pkcs8, out _, skipCopy: false);
+        var pbe = new PbeParameters(PbeEncryptionAlgorithm.Aes256Cbc, HashAlgorithmName.SHA256, iterations);
+        byte[] enc = info.Encrypt(password, pbe);
+
+        return EncodePem("ENCRYPTED PRIVATE KEY", enc);
+    }
+
+    /// <summary>
+    /// Encode an Ed25519 PKCS#10 CertificationRequest (CSR).
+    /// </summary>
+    /// <param name="subjectNameDer">DER-encoded X.509 Name (e.g. X500DistinguishedName.RawData).</param>
+    /// <param name="publicKey">32-byte Ed25519 public key.</param>
+    /// <param name="privateKey">64-byte expanded Ed25519 private key (scalar||prefix).</param>
+    /// <returns>DER-encoded CertificationRequest.</returns>
+    public static byte[] EncodePkcs10CertificationRequest(
+        ReadOnlySpan<byte> subjectNameDer,
+        ReadOnlySpan<byte> publicKey,
+        ReadOnlySpan<byte> privateKey)
+    {
+        if (publicKey.Length != Ed25519.PublicKeySize)
+            throw new ArgumentException($"Public key must be {Ed25519.PublicKeySize} bytes", nameof(publicKey));
+        if (privateKey.Length != Ed25519.PrivateKeySize)
+            throw new ArgumentException($"Private key must be {Ed25519.PrivateKeySize} bytes", nameof(privateKey));
+        if (subjectNameDer.IsEmpty)
+            throw new ArgumentException("Subject name must not be empty", nameof(subjectNameDer));
+
+        // CertificationRequestInfo ::= SEQUENCE {
+        //   version       INTEGER { v1(0) } (v1,...),
+        //   subject       Name,
+        //   subjectPKInfo SubjectPublicKeyInfo,
+        //   attributes    [0] IMPLICIT Attributes
+        // }
+        //
+        // Many implementations expect the attributes field to be present, even if empty.
+        // Empty attributes: [0] IMPLICIT SET OF Attribute -> A0 00
+        var criWriter = new AsnWriter(AsnEncodingRules.DER);
+        using (criWriter.PushSequence())
+        {
+            criWriter.WriteInteger(0);
+            criWriter.WriteEncodedValue(subjectNameDer);
+            criWriter.WriteEncodedValue(EncodeSubjectPublicKeyInfo(publicKey));
+            criWriter.WriteEncodedValue([0xA0, 0x00]);
+        }
+        byte[] certificationRequestInfo = criWriter.Encode();
+
+        // signature = Ed25519.Sign(CertificationRequestInfo)
+        var signature = new byte[Ed25519.SignatureSize];
+        Ed25519.Sign(signature, certificationRequestInfo, publicKey, privateKey);
+
+        // CertificationRequest ::= SEQUENCE {
+        //   certificationRequestInfo CertificationRequestInfo,
+        //   signatureAlgorithm       AlgorithmIdentifier,
+        //   signature                BIT STRING
+        // }
+        var csrWriter = new AsnWriter(AsnEncodingRules.DER);
+        using (csrWriter.PushSequence())
+        {
+            csrWriter.WriteEncodedValue(certificationRequestInfo);
+            csrWriter.WriteEncodedValue(Ed25519AlgorithmIdentifier);
+            csrWriter.WriteBitString(signature);
+        }
+
+        return csrWriter.Encode();
+    }
+
+    /// <summary>
+    /// Export an Ed25519 PKCS#10 CSR as PEM ("CERTIFICATE REQUEST").
+    /// </summary>
+    public static string ExportCsrPem(
+        ReadOnlySpan<byte> subjectNameDer,
+        ReadOnlySpan<byte> publicKey,
+        ReadOnlySpan<byte> privateKey)
+    {
+        byte[] der = EncodePkcs10CertificationRequest(subjectNameDer, publicKey, privateKey);
+        return EncodePem("CERTIFICATE REQUEST", der);
+    }
+
+    /// <summary>
+    /// Verify an Ed25519 PKCS#10 CertificationRequest (CSR).
+    /// </summary>
+    /// <param name="csrDer">DER-encoded CertificationRequest.</param>
+    /// <param name="subjectNameDer">DER-encoded X.509 Name from the CSR.</param>
+    /// <param name="publicKey">32-byte Ed25519 public key from the CSR.</param>
+    /// <returns>True if the signature is valid and the CSR is structurally consistent, otherwise false.</returns>
+    public static bool VerifyPkcs10CertificationRequest(
+        ReadOnlySpan<byte> csrDer,
+        out byte[] subjectNameDer,
+        out byte[] publicKey)
+    {
+        subjectNameDer = [];
+        publicKey = [];
+
+        try
+        {
+            // AsnReader prefers ReadOnlyMemory<byte> in some TFMs; keep a stable backing buffer.
+            byte[] csrBytes = csrDer.ToArray();
+
+            // CertificationRequest ::= SEQUENCE {
+            //   certificationRequestInfo CertificationRequestInfo,
+            //   signatureAlgorithm       AlgorithmIdentifier,
+            //   signature                BIT STRING
+            // }
+            var reader = new AsnReader(csrBytes, AsnEncodingRules.DER);
+            var seq = reader.ReadSequence();
+
+            // Keep the exact DER bytes that were signed.
+            byte[] criDer = seq.ReadEncodedValue().ToArray();
+
+            // AlgorithmIdentifier must be Ed25519 with absent parameters (RFC 8410).
+            var alg = seq.ReadSequence();
+            string oid = alg.ReadObjectIdentifier();
+            if (oid != "1.3.101.112")
+                return false;
+            if (alg.HasData)
+                return false;
+
+            int unused = 0;
+            ReadOnlySpan<byte> sig = seq.ReadBitString(out unused);
+            if (unused != 0 || sig.Length != Ed25519.SignatureSize)
+                return false;
+
+            seq.ThrowIfNotEmpty();
+            reader.ThrowIfNotEmpty();
+
+            // CertificationRequestInfo ::= SEQUENCE {
+            //   version       INTEGER { v1(0) },
+            //   subject       Name,
+            //   subjectPKInfo SubjectPublicKeyInfo,
+            //   attributes    [0] IMPLICIT Attributes
+            // }
+            var criReader = new AsnReader(criDer, AsnEncodingRules.DER);
+            var cri = criReader.ReadSequence();
+
+            // version
+            var version = cri.ReadInteger();
+            if (version != 0)
+                return false;
+
+            // subject (Name)
+            subjectNameDer = cri.ReadEncodedValue().ToArray();
+
+            // subjectPKInfo (SPKI)
+            byte[] spkiDer = cri.ReadEncodedValue().ToArray();
+            publicKey = DecodeSubjectPublicKeyInfo(spkiDer);
+
+            // attributes [0] IMPLICIT - allow absent or empty, but if present it must be tag 0.
+            if (cri.HasData)
+            {
+                var tag = cri.PeekTag();
+                if (tag.TagClass != TagClass.ContextSpecific || tag.TagValue != 0)
+                    return false;
+
+                // Consume it (SET OF Attribute). We don't need to interpret its content for signature verification.
+                cri.ReadEncodedValue();
+            }
+
+            cri.ThrowIfNotEmpty();
+            criReader.ThrowIfNotEmpty();
+
+            return Ed25519.Verify(sig, criDer, publicKey);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>
