@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
+using System.Security.Cryptography.X509Certificates;
+using System.Security.Cryptography.Pkcs;
 using Xunit;
 
 namespace Ed25519.Tests;
@@ -174,6 +176,84 @@ public class Ed25519Tests
     }
 
     [Fact]
+    public void SignatureForDifferentMessage_ShouldNotVerify()
+    {
+        var (publicKey, privateKey, _) = Ed25519.GenerateKeypair();
+
+        byte[] message = "message-1"u8.ToArray();
+        byte[] otherMessage = "message-2"u8.ToArray();
+        byte[] signature = Ed25519.Sign(message, publicKey, privateKey);
+
+        Assert.False(Ed25519.Verify(signature, otherMessage, publicKey));
+    }
+
+    [Fact]
+    public void SignatureForDifferentPublicKey_ShouldNotVerify()
+    {
+        var (publicKey1, privateKey1, _) = Ed25519.GenerateKeypair();
+        var (publicKey2, _, _) = Ed25519.GenerateKeypair();
+
+        byte[] message = "hello"u8.ToArray();
+        byte[] signature = Ed25519.Sign(message, publicKey1, privateKey1);
+
+        Assert.False(Ed25519.Verify(signature, message, publicKey2));
+    }
+
+    [Fact]
+    public void SignatureWithNonCanonicalS_ShouldNotVerify()
+    {
+        var (publicKey, privateKey, _) = Ed25519.GenerateKeypair();
+
+        byte[] message = "Test message"u8.ToArray();
+        byte[] signature = Ed25519.Sign(message, publicKey, privateKey);
+
+        // Ed25519.Verify rejects signatures where the top 3 bits of S are non-zero.
+        signature[63] |= 0b1110_0000;
+
+        Assert.False(Ed25519.Verify(signature, message, publicKey));
+    }
+
+    [Fact]
+    public void Verify_WithInvalidPublicKeyEncoding_ShouldReturnFalse()
+    {
+        // 0xFF.. is extremely unlikely to represent a valid curve point encoding.
+        byte[] invalidPublicKey = Enumerable.Repeat((byte)0xFF, 32).ToArray();
+        byte[] message = "hello"u8.ToArray();
+        byte[] signature = new byte[64]; // doesn't matter
+
+        Assert.False(Ed25519.Verify(signature, message, invalidPublicKey));
+    }
+
+    [Fact]
+    public void SignOverload_WithAndWithoutPublicKey_ShouldMatch()
+    {
+        byte[] seed = Convert.FromHexString("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
+        byte[] publicKey = new byte[32];
+        byte[] privateKey = new byte[64];
+        Ed25519.CreateKeypair(publicKey, privateKey, seed);
+
+        byte[] message = "same-input"u8.ToArray();
+
+        byte[] sig1 = Ed25519.Sign(message, publicKey, privateKey);
+        byte[] sig2 = Ed25519.Sign(message, privateKey);
+
+        Assert.Equal(sig1, sig2);
+        Assert.True(Ed25519.Verify(sig1, message, publicKey));
+    }
+
+    [Fact]
+    public void DeterministicSignatures_SameInputsSameSignature()
+    {
+        var (publicKey, privateKey, _) = Ed25519.GenerateKeypair();
+        byte[] message = "deterministic"u8.ToArray();
+
+        byte[] sig1 = Ed25519.Sign(message, publicKey, privateKey);
+        byte[] sig2 = Ed25519.Sign(message, publicKey, privateKey);
+
+        Assert.Equal(sig1, sig2);
+    }
+
+    [Fact]
     public void Pkcs8Encoding_RoundTrip()
     {
         byte[] seed = Convert.FromHexString("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
@@ -214,6 +294,83 @@ public class Ed25519Tests
         byte[] publicKeyDer = Pkcs.DecodePem(publicPem, "PUBLIC KEY");
         byte[] recoveredPublicKey = Pkcs.DecodeSubjectPublicKeyInfo(publicKeyDer);
 
+        Assert.Equal(publicKey, recoveredPublicKey);
+    }
+
+    [Fact]
+    public void DecodePem_WithWrongLabel_ShouldThrow()
+    {
+        var (publicKey, _, seed) = Ed25519.GenerateKeypair();
+
+        string privatePem = Pkcs.ExportPrivateKeyPem(seed);
+        Assert.Throws<ArgumentException>(() => Pkcs.DecodePem(privatePem, "PUBLIC KEY"));
+
+        string publicPem = Pkcs.ExportPublicKeyPem(publicKey);
+        Assert.Throws<ArgumentException>(() => Pkcs.DecodePem(publicPem, "PRIVATE KEY"));
+    }
+
+    [Fact]
+    public void DecodeSubjectPublicKeyInfo_WithWrongOid_ShouldThrow()
+    {
+        var (publicKey, _, _) = Ed25519.GenerateKeypair();
+        byte[] spki = Pkcs.EncodeSubjectPublicKeyInfo(publicKey);
+
+        // Corrupt the OID bytes (1.3.101.112) -> make it not match.
+        // In this encoding, the OID appears as: 06 03 2B 65 70
+        int idx = Array.IndexOf(spki, (byte)0x06);
+        Assert.True(idx >= 0);
+        spki[idx + 2] ^= 0x01; // flip one byte of the OID payload
+
+        Assert.Throws<ArgumentException>(() => Pkcs.DecodeSubjectPublicKeyInfo(spki));
+    }
+
+    [Fact]
+    public void DecodePkcs8PrivateKey_WithWrongOid_ShouldThrow()
+    {
+        var (_, _, seed) = Ed25519.GenerateKeypair();
+        byte[] pkcs8 = Pkcs.EncodePkcs8PrivateKey(seed);
+
+        // Corrupt the OID bytes (1.3.101.112) -> make it not match.
+        // In this encoding, the OID appears as: 06 03 2B 65 70
+        int idx = Array.IndexOf(pkcs8, (byte)0x06);
+        Assert.True(idx >= 0);
+        pkcs8[idx + 2] ^= 0x01; // flip one byte of the OID payload
+
+        Assert.Throws<ArgumentException>(() => Pkcs.DecodePkcs8PrivateKey(pkcs8));
+    }
+
+    [Fact]
+    public void EncryptedPkcs8Pem_RoundTrip_DecryptAndRecoverSeed()
+    {
+        var (publicKey, _, seed) = Ed25519.GenerateKeypair();
+
+        const string password = "correct horse battery staple";
+
+        // Keep iterations modest for test speed (still exercises PBES2/PBKDF2/AES path).
+        string encPem = Pkcs.ExportEncryptedPrivateKeyPem(seed, publicKey, password, iterations: 1_000);
+        byte[] encDer = Pkcs.DecodePem(encPem, "ENCRYPTED PRIVATE KEY");
+
+        // Decrypt using platform PKCS#8 support and then decode Ed25519 seed.
+        var info = Pkcs8PrivateKeyInfo.DecryptAndDecode(password, encDer, out _);
+        byte[] pkcs8Der = info.Encode();
+
+        byte[] recoveredSeed = Pkcs.DecodePkcs8PrivateKey(pkcs8Der);
+        Assert.Equal(seed, recoveredSeed);
+    }
+
+    [Fact]
+    public void Pkcs10Csr_RoundTrip_VerifyAndExtract()
+    {
+        var (publicKey, privateKey, _) = Ed25519.GenerateKeypair();
+
+        // Provide a DER-encoded X.509 Name (subject).
+        // (Pkcs helpers operate on DER directly, rather than parsing X500 strings.)
+        byte[] subjectNameDer = new X500DistinguishedName("CN=example").RawData;
+
+        byte[] csrDer = Pkcs.EncodePkcs10CertificationRequest(subjectNameDer, publicKey, privateKey);
+
+        Assert.True(Pkcs.VerifyPkcs10CertificationRequest(csrDer, out byte[] recoveredSubjectDer, out byte[] recoveredPublicKey));
+        Assert.Equal(subjectNameDer, recoveredSubjectDer);
         Assert.Equal(publicKey, recoveredPublicKey);
     }
 }
