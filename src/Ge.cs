@@ -328,6 +328,8 @@ public static class Ge
     /// </summary>
     internal static bool HasSmallOrder(in GeP3 p)
     {
+        // Multiply by the cofactor (8) via three doublings; low-order torsion points
+        // are exactly the points that collapse to the identity under this operation.
         P3Dbl(out GeP1P1 doubled, in p);
         P1P1ToP2(out GeP2 q, in doubled);
 
@@ -345,6 +347,8 @@ public static class Ge
     /// </summary>
     internal static bool IsIdentity(in GeP2 p)
     {
+        // In projective Edwards coordinates the identity is represented by X = 0 and Y = Z,
+        // corresponding to the affine point (0, 1).
         Fe.Sub(out Fe yMinusZ, in p.Y, in p.Z);
         return Fe.IsNonZero(in p.X) == 0 && Fe.IsNonZero(in yMinusZ) == 0;
     }
