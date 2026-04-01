@@ -113,7 +113,7 @@ If your goal is *certificate issuance*, this repo includes **CSR (PKCS#10) helpe
 - `Pkcs.ExportCsrPem(...)` (PEM)
 - `Pkcs.VerifyPkcs10CertificationRequest(...)`
 
-It also supports exporting **encrypted** PKCS#8 PEM (`"ENCRYPTED PRIVATE KEY"`) via `Pkcs.ExportEncryptedPrivateKeyPem(...)`.
+It also supports exporting **encrypted** PKCS#8 PEM (`"ENCRYPTED PRIVATE KEY"`) via `Pkcs.ExportEncryptedPrivateKeyPem(seed, password, iterations)`.
 
 ## Implementation Notes
 
@@ -123,14 +123,14 @@ This implementation follows the ref10 naming conventions from the original C cod
 
 | Type | Full Name | Description |
 |------|-----------|-------------|
-| `Fe` | Field Element | Element of the field Z/(2²⁵⁵-19), represented as 10 limbs of 26/25 bits |
-| `Sc` | Scalar | Integer modulo L (the group order ≈ 2²⁵²), used for secret keys |
-| `Ge` | Group Element | Static class for curve point operations |
-| `GeP2` | Projective Point | Point in (X:Y:Z) projective coordinates where x=X/Z, y=Y/Z |
-| `GeP3` | Extended Point | Point in (X:Y:Z:T) extended coordinates where T=XY/Z |
-| `GeP1P1` | Completed Point | Intermediate form (X:Y:Z:T) output by additions, with x=X/Z, y=Y/T |
-| `GePrecomp` | Precomputed Point | Affine Niels form (y+x, y-x, 2dxy) for fast fixed-base scalar multiplication |
-| `GeCached` | Cached Point | Extended Niels form for efficient point addition |
+| `Fe` | Field Element | Internal type for elements of Z/(2²⁵⁵-19), represented as 10 limbs of 26/25 bits |
+| `Sc` | Scalar | Internal type for integers modulo L (group order ≈ 2²⁵²) |
+| `Ge` | Group Element | Internal static class for curve point operations |
+| `GeP2` | Projective Point | Internal point type in (X:Y:Z) projective coordinates where x=X/Z, y=Y/Z |
+| `GeP3` | Extended Point | Internal point type in (X:Y:Z:T) extended coordinates where T=XY/Z |
+| `GeP1P1` | Completed Point | Internal intermediate point form (X:Y:Z:T), with x=X/Z, y=Y/T |
+| `GePrecomp` | Precomputed Point | Internal affine Niels form (y+x, y-x, 2dxy) for fast fixed-base multiplication |
+| `GeCached` | Cached Point | Internal extended Niels form for efficient point addition |
 
 ### Precomputed Tables
 
