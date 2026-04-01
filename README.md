@@ -49,6 +49,12 @@ Ed25519.CreateKeypair(publicKey, privateKey, seed);
 - **Constant-time vs variable-time**:
   - Signing uses constant-time building blocks (`CMov`, etc.).
   - Verification uses variable-time operations (inputs are public).
+- **Strict verification**:
+  - Verification rejects signatures with non-canonical `S` (must satisfy `S < L`).
+  - Verification rejects low-order public keys (small torsion subgroup).
+- **Exact-size contracts**:
+  - `CreateKeypair`: public key = 32 bytes, private key = 64 bytes, seed = 32 bytes.
+  - `Sign`/`Verify`: fixed-size key/signature inputs must be exact size (not oversized).
 
 ### Sign a Message
 
@@ -114,6 +120,8 @@ If your goal is *certificate issuance*, this repo includes **CSR (PKCS#10) helpe
 - `Pkcs.VerifyPkcs10CertificationRequest(...)`
 
 It also supports exporting **encrypted** PKCS#8 PEM (`"ENCRYPTED PRIVATE KEY"`) via `Pkcs.ExportEncryptedPrivateKeyPem(seed, password, iterations)`.
+
+The old encrypted export overload `Pkcs.ExportEncryptedPrivateKeyPem(seed, publicKey, password, iterations)` is kept for compatibility but marked obsolete; the `publicKey` argument is ignored.
 
 ## Implementation Notes
 

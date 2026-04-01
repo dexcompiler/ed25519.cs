@@ -15,6 +15,15 @@ namespace Ed25519;
 /// </summary>
 public static class Ed25519
 {
+    // Group order L in little-endian form.
+    private static readonly byte[] ScalarOrderL =
+    [
+        0xED, 0xD3, 0xF5, 0x5C, 0x1A, 0x63, 0x12, 0x58,
+        0xD6, 0x9C, 0xF7, 0xA2, 0xDE, 0xF9, 0xDE, 0x14,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10
+    ];
+
     /// <summary>Size of a public key in bytes.</summary>
     public const int PublicKeySize = 32;
     
@@ -35,18 +44,18 @@ public static class Ed25519
     /// <param name="seed">Input: 32-byte random seed.</param>
     public static void CreateKeypair(Span<byte> publicKey, Span<byte> privateKey, ReadOnlySpan<byte> seed)
     {
-        if (publicKey.Length < PublicKeySize)
-            throw new ArgumentException($"Public key buffer must be at least {PublicKeySize} bytes", nameof(publicKey));
-        if (privateKey.Length < PrivateKeySize)
-            throw new ArgumentException($"Private key buffer must be at least {PrivateKeySize} bytes", nameof(privateKey));
-        if (seed.Length < SeedSize)
-            throw new ArgumentException($"Seed must be at least {SeedSize} bytes", nameof(seed));
+        if (publicKey.Length != PublicKeySize)
+            throw new ArgumentException($"Public key buffer must be exactly {PublicKeySize} bytes", nameof(publicKey));
+        if (privateKey.Length != PrivateKeySize)
+            throw new ArgumentException($"Private key buffer must be exactly {PrivateKeySize} bytes", nameof(privateKey));
+        if (seed.Length != SeedSize)
+            throw new ArgumentException($"Seed must be exactly {SeedSize} bytes", nameof(seed));
 
         // Hash the seed to produce the private scalar and prefix
         Span<byte> hash = stackalloc byte[64];
         try
         {
-            SHA512.HashData(seed[..SeedSize], hash);
+            SHA512.HashData(seed, hash);
 
             // Clamp the scalar (first 32 bytes)
             hash[0] &= 248;
@@ -91,12 +100,12 @@ public static class Ed25519
     /// <param name="privateKey">The 64-byte private key.</param>
     public static void Sign(Span<byte> signature, ReadOnlySpan<byte> message, ReadOnlySpan<byte> publicKey, ReadOnlySpan<byte> privateKey)
     {
-        if (signature.Length < SignatureSize)
-            throw new ArgumentException($"Signature buffer must be at least {SignatureSize} bytes", nameof(signature));
-        if (publicKey.Length < PublicKeySize)
-            throw new ArgumentException($"Public key must be at least {PublicKeySize} bytes", nameof(publicKey));
-        if (privateKey.Length < PrivateKeySize)
-            throw new ArgumentException($"Private key must be at least {PrivateKeySize} bytes", nameof(privateKey));
+        if (signature.Length != SignatureSize)
+            throw new ArgumentException($"Signature buffer must be exactly {SignatureSize} bytes", nameof(signature));
+        if (publicKey.Length != PublicKeySize)
+            throw new ArgumentException($"Public key must be exactly {PublicKeySize} bytes", nameof(publicKey));
+        if (privateKey.Length != PrivateKeySize)
+            throw new ArgumentException($"Private key must be exactly {PrivateKeySize} bytes", nameof(privateKey));
 
         // The private key contains: [0..31] = clamped hash (scalar), [32..63] = prefix
         ReadOnlySpan<byte> prefix = privateKey[32..64];
@@ -123,7 +132,7 @@ public static class Ed25519
             using (var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA512))
             {
                 sha.AppendData(signature[..32]);
-                sha.AppendData(publicKey[..32]);
+                sha.AppendData(publicKey);
                 sha.AppendData(message);
                 sha.GetHashAndReset(h);
             }
@@ -148,8 +157,8 @@ public static class Ed25519
     /// <param name="privateKey">The 64-byte private key (expanded key: scalar||prefix).</param>
     public static void Sign(Span<byte> signature, ReadOnlySpan<byte> message, ReadOnlySpan<byte> privateKey)
     {
-        if (privateKey.Length < PrivateKeySize)
-            throw new ArgumentException($"Private key buffer must be at least {PrivateKeySize} bytes", nameof(privateKey));
+        if (privateKey.Length != PrivateKeySize)
+            throw new ArgumentException($"Private key buffer must be exactly {PrivateKeySize} bytes", nameof(privateKey));
 
         // Derive public key: A = [scalar] * B
         Span<byte> publicKey = stackalloc byte[PublicKeySize];
@@ -196,13 +205,15 @@ public static class Ed25519
     /// <returns>True if the signature is valid, false otherwise.</returns>
     public static bool Verify(ReadOnlySpan<byte> signature, ReadOnlySpan<byte> message, ReadOnlySpan<byte> publicKey)
     {
-        if (signature.Length < SignatureSize)
+        if (signature.Length != SignatureSize)
             return false;
-        if (publicKey.Length < PublicKeySize)
+        if (publicKey.Length != PublicKeySize)
             return false;
 
         // Check that s is in range (top 3 bits of s must be 0)
         if ((signature[63] & 224) != 0)
+            return false;
+        if (!IsCanonicalScalar(signature[32..64]))
             return false;
 
         // Decode public key as point A (negated for subtraction in verification)
@@ -244,5 +255,25 @@ public static class Ed25519
             r |= (byte)(x[i] ^ y[i]);
         }
         return r == 0;
+    }
+
+    // Returns true iff s is a canonical scalar in [0, L).
+    private static bool IsCanonicalScalar(ReadOnlySpan<byte> s)
+    {
+        if (s.Length != 32)
+            return false;
+
+        // Inputs in Verify are public, so this lexicographic comparison does not
+        // introduce a secret-dependent side-channel.
+        for (int i = 31; i >= 0; i--)
+        {
+            if (s[i] < ScalarOrderL[i])
+                return true;
+            if (s[i] > ScalarOrderL[i])
+                return false;
+        }
+
+        // Equal to L is non-canonical and must be rejected.
+        return false;
     }
 }
