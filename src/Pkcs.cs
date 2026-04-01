@@ -5,7 +5,6 @@
 //
 // SPDX-License-Identifier: MIT
 
-using System.Buffers.Binary;
 using System.Text;
 using System.Formats.Asn1;
 using System.Security.Cryptography;
@@ -18,8 +17,7 @@ namespace Ed25519;
 /// </summary>
 public static class Pkcs
 {
-    // OID for Ed25519: 1.3.101.112
-    private static readonly byte[] Ed25519Oid = [0x2B, 0x65, 0x70]; // 1.3.101.112
+    private const string Ed25519OidText = "1.3.101.112";
 
     // AlgorithmIdentifier for Ed25519 (no parameters)
     // SEQUENCE { OID 1.3.101.112 }
@@ -78,53 +76,33 @@ public static class Pkcs
     /// <returns>32-byte Ed25519 public key.</returns>
     public static byte[] DecodeSubjectPublicKeyInfo(ReadOnlySpan<byte> spki)
     {
-        // Minimal validation for our expected format
-        // Expected structure:
-        // SEQUENCE (0x30) len
-        //   SEQUENCE (0x30) len  [AlgorithmIdentifier]
-        //     OID (0x06) len [Ed25519 OID]
-        //   BIT STRING (0x03) len 0x00 [public key]
+        try
+        {
+            byte[] spkiBytes = spki.ToArray();
+            var reader = new AsnReader(spkiBytes, AsnEncodingRules.DER);
+            var seq = reader.ReadSequence();
 
-        if (spki.Length < 44)
-            throw new ArgumentException("Invalid SubjectPublicKeyInfo: too short");
+            var algId = seq.ReadSequence();
+            string oid = algId.ReadObjectIdentifier();
+            if (oid != Ed25519OidText)
+                throw new ArgumentException("Invalid SubjectPublicKeyInfo: not Ed25519 OID", nameof(spki));
+            if (algId.HasData)
+                throw new ArgumentException("Invalid SubjectPublicKeyInfo: Ed25519 parameters must be absent", nameof(spki));
 
-        int pos = 0;
+            ReadOnlySpan<byte> publicKey = seq.ReadBitString(out int unusedBitCount);
+            if (unusedBitCount != 0)
+                throw new ArgumentException("Invalid SubjectPublicKeyInfo: expected 0 unused bits", nameof(spki));
+            if (publicKey.Length != Ed25519.PublicKeySize)
+                throw new ArgumentException("Invalid SubjectPublicKeyInfo: unexpected public key length", nameof(spki));
 
-        // Outer SEQUENCE
-        if (spki[pos++] != 0x30)
-            throw new ArgumentException("Invalid SubjectPublicKeyInfo: expected SEQUENCE");
-
-        int outerLen = ReadLength(spki, ref pos);
-
-        // AlgorithmIdentifier SEQUENCE
-        if (spki[pos++] != 0x30)
-            throw new ArgumentException("Invalid SubjectPublicKeyInfo: expected AlgorithmIdentifier SEQUENCE");
-
-        int algIdLen = ReadLength(spki, ref pos);
-        int algIdEnd = pos + algIdLen;
-
-        // OID
-        if (spki[pos++] != 0x06)
-            throw new ArgumentException("Invalid SubjectPublicKeyInfo: expected OID");
-
-        int oidLen = ReadLength(spki, ref pos);
-        if (oidLen != 3 || !spki.Slice(pos, 3).SequenceEqual(Ed25519Oid))
-            throw new ArgumentException("Invalid SubjectPublicKeyInfo: not Ed25519 OID");
-
-        pos = algIdEnd; // Skip any parameters (should be none for Ed25519)
-
-        // BIT STRING
-        if (spki[pos++] != 0x03)
-            throw new ArgumentException("Invalid SubjectPublicKeyInfo: expected BIT STRING");
-
-        int bitStringLen = ReadLength(spki, ref pos);
-        if (bitStringLen != 33)
-            throw new ArgumentException("Invalid SubjectPublicKeyInfo: unexpected BIT STRING length");
-
-        if (spki[pos++] != 0x00)
-            throw new ArgumentException("Invalid SubjectPublicKeyInfo: expected 0 unused bits");
-
-        return spki.Slice(pos, 32).ToArray();
+            seq.ThrowIfNotEmpty();
+            reader.ThrowIfNotEmpty();
+            return publicKey.ToArray();
+        }
+        catch (AsnContentException ex)
+        {
+            throw new ArgumentException("Invalid SubjectPublicKeyInfo: malformed DER", nameof(spki), ex);
+        }
     }
 
     /// <summary>
@@ -239,56 +217,62 @@ public static class Pkcs
     /// <returns>32-byte Ed25519 seed.</returns>
     public static byte[] DecodePkcs8PrivateKey(ReadOnlySpan<byte> pkcs8)
     {
-        if (pkcs8.Length < 48)
-            throw new ArgumentException("Invalid PKCS#8: too short");
+        try
+        {
+            byte[] pkcs8Bytes = pkcs8.ToArray();
+            var reader = new AsnReader(pkcs8Bytes, AsnEncodingRules.DER);
+            var seq = reader.ReadSequence();
 
-        int pos = 0;
+            var version = seq.ReadInteger();
+            if (version != 0 && version != 1)
+                throw new ArgumentException("Invalid PKCS#8: unsupported version", nameof(pkcs8));
 
-        // Outer SEQUENCE
-        if (pkcs8[pos++] != 0x30)
-            throw new ArgumentException("Invalid PKCS#8: expected SEQUENCE");
+            var algId = seq.ReadSequence();
+            string oid = algId.ReadObjectIdentifier();
+            if (oid != Ed25519OidText)
+                throw new ArgumentException("Invalid PKCS#8: not Ed25519 OID", nameof(pkcs8));
+            if (algId.HasData)
+                throw new ArgumentException("Invalid PKCS#8: Ed25519 parameters must be absent", nameof(pkcs8));
 
-        int outerLen = ReadLength(pkcs8, ref pos);
+            ReadOnlySpan<byte> privateKeyOctets = seq.ReadOctetString();
+            var privateKeyReader = new AsnReader(privateKeyOctets.ToArray(), AsnEncodingRules.DER);
+            ReadOnlySpan<byte> seed = privateKeyReader.ReadOctetString();
+            if (seed.Length != Ed25519.SeedSize)
+                throw new ArgumentException("Invalid PKCS#8: unexpected seed length", nameof(pkcs8));
+            privateKeyReader.ThrowIfNotEmpty();
 
-        // Version INTEGER
-        if (pkcs8[pos++] != 0x02)
-            throw new ArgumentException("Invalid PKCS#8: expected INTEGER");
+            while (seq.HasData)
+            {
+                Asn1Tag tag = seq.PeekTag();
+                if (tag.TagClass != TagClass.ContextSpecific)
+                    throw new ArgumentException("Invalid PKCS#8: unexpected trailing data", nameof(pkcs8));
 
-        int versionLen = ReadLength(pkcs8, ref pos);
-        pos += versionLen; // Skip version value
+                if (tag.TagValue == 0)
+                {
+                    if (!tag.IsConstructed)
+                        throw new ArgumentException("Invalid PKCS#8: malformed attributes field", nameof(pkcs8));
+                    seq.ReadEncodedValue();
+                    continue;
+                }
 
-        // AlgorithmIdentifier SEQUENCE
-        if (pkcs8[pos++] != 0x30)
-            throw new ArgumentException("Invalid PKCS#8: expected AlgorithmIdentifier SEQUENCE");
+                if (tag.TagValue == 1)
+                {
+                    if (tag.IsConstructed)
+                        throw new ArgumentException("Invalid PKCS#8: malformed public key field", nameof(pkcs8));
+                    seq.ReadEncodedValue();
+                    continue;
+                }
 
-        int algIdLen = ReadLength(pkcs8, ref pos);
-        int algIdEnd = pos + algIdLen;
+                throw new ArgumentException("Invalid PKCS#8: unexpected context-specific field", nameof(pkcs8));
+            }
 
-        // OID
-        if (pkcs8[pos++] != 0x06)
-            throw new ArgumentException("Invalid PKCS#8: expected OID");
-
-        int oidLen = ReadLength(pkcs8, ref pos);
-        if (oidLen != 3 || !pkcs8.Slice(pos, 3).SequenceEqual(Ed25519Oid))
-            throw new ArgumentException("Invalid PKCS#8: not Ed25519 OID");
-
-        pos = algIdEnd;
-
-        // PrivateKey OCTET STRING (outer)
-        if (pkcs8[pos++] != 0x04)
-            throw new ArgumentException("Invalid PKCS#8: expected OCTET STRING");
-
-        int outerOctetLen = ReadLength(pkcs8, ref pos);
-
-        // CurvePrivateKey OCTET STRING (inner)
-        if (pkcs8[pos++] != 0x04)
-            throw new ArgumentException("Invalid PKCS#8: expected inner OCTET STRING");
-
-        int innerOctetLen = ReadLength(pkcs8, ref pos);
-        if (innerOctetLen != 32)
-            throw new ArgumentException("Invalid PKCS#8: unexpected seed length");
-
-        return pkcs8.Slice(pos, 32).ToArray();
+            reader.ThrowIfNotEmpty();
+            return seed.ToArray();
+        }
+        catch (AsnContentException ex)
+        {
+            throw new ArgumentException("Invalid PKCS#8: malformed DER", nameof(pkcs8), ex);
+        }
     }
 
     /// <summary>
@@ -321,24 +305,50 @@ public static class Pkcs
     /// <returns>DER-encoded data.</returns>
     public static byte[] DecodePem(string pem, string expectedLabel)
     {
+        if (string.IsNullOrWhiteSpace(pem))
+            throw new ArgumentException("PEM must not be empty", nameof(pem));
+        if (string.IsNullOrWhiteSpace(expectedLabel))
+            throw new ArgumentException("Expected label must not be empty", nameof(expectedLabel));
+
         string beginMarker = $"-----BEGIN {expectedLabel}-----";
         string endMarker = $"-----END {expectedLabel}-----";
 
-        int beginIndex = pem.IndexOf(beginMarker);
-        if (beginIndex < 0)
-            throw new ArgumentException($"PEM does not contain '{beginMarker}'");
+        string trimmedPem = pem.Trim();
+        string normalizedPem = trimmedPem.Replace("\r\n", "\n").Replace('\r', '\n');
+        string[] lines = normalizedPem.Split('\n');
 
-        int endIndex = pem.IndexOf(endMarker, beginIndex);
-        if (endIndex < 0)
-            throw new ArgumentException($"PEM does not contain '{endMarker}'");
+        if (lines.Length < 3 || lines[0] != beginMarker || lines[^1] != endMarker)
+            throw new ArgumentException($"PEM must contain exactly one '{expectedLabel}' block", nameof(pem));
 
-        int contentStart = beginIndex + beginMarker.Length;
-        string base64Content = pem.Substring(contentStart, endIndex - contentStart);
+        var base64Builder = new StringBuilder();
+        for (int i = 1; i < lines.Length - 1; i++)
+        {
+            string line = lines[i];
+            if (line.Length == 0)
+                throw new ArgumentException("PEM contains empty base64 line", nameof(pem));
+            if (line.StartsWith("-----", StringComparison.Ordinal) || line.EndsWith("-----", StringComparison.Ordinal))
+                throw new ArgumentException("PEM contains malformed boundary markers", nameof(pem));
 
-        // Remove whitespace
-        base64Content = base64Content.Replace("\r", "").Replace("\n", "").Replace(" ", "");
+            for (int j = 0; j < line.Length; j++)
+            {
+                if (char.IsWhiteSpace(line[j]))
+                    throw new ArgumentException("PEM base64 content must not contain whitespace within lines", nameof(pem));
+            }
 
-        return Convert.FromBase64String(base64Content);
+            base64Builder.Append(line);
+        }
+
+        if (base64Builder.Length == 0)
+            throw new ArgumentException("PEM contains no base64 content", nameof(pem));
+
+        try
+        {
+            return Convert.FromBase64String(base64Builder.ToString());
+        }
+        catch (FormatException ex)
+        {
+            throw new ArgumentException("PEM contains invalid base64 content", nameof(pem), ex);
+        }
     }
 
     /// <summary>
@@ -562,25 +572,5 @@ public static class Pkcs
         }
     }
 
-    /// <summary>
-    /// Read a DER length encoding.
-    /// </summary>
-    private static int ReadLength(ReadOnlySpan<byte> data, ref int pos)
-    {
-        byte b = data[pos++];
-        if (b < 0x80)
-            return b;
-
-        int numBytes = b & 0x7F;
-        if (numBytes > 4)
-            throw new ArgumentException("Length too large");
-
-        int length = 0;
-        for (int i = 0; i < numBytes; i++)
-        {
-            length = (length << 8) | data[pos++];
-        }
-        return length;
-    }
 }
 

@@ -4,6 +4,7 @@
 
 using System.Security.Cryptography.X509Certificates;
 using System.Security.Cryptography.Pkcs;
+using System.Formats.Asn1;
 using Xunit;
 
 namespace Ed25519.Tests;
@@ -338,6 +339,49 @@ public class Ed25519Tests
     }
 
     [Fact]
+    public void DecodeSubjectPublicKeyInfo_WithTrailingBytes_ShouldThrow()
+    {
+        var (publicKey, _, _) = Ed25519.GenerateKeypair();
+        byte[] spki = Pkcs.EncodeSubjectPublicKeyInfo(publicKey);
+        byte[] withTrailingByte = [.. spki, 0x00];
+
+        Assert.Throws<ArgumentException>(() => Pkcs.DecodeSubjectPublicKeyInfo(withTrailingByte));
+    }
+
+    [Fact]
+    public void DecodeSubjectPublicKeyInfo_WithNullParameters_ShouldThrow()
+    {
+        var (publicKey, _, _) = Ed25519.GenerateKeypair();
+        byte[] spkiWithNullParams = EncodeSpkiWithNullParameters(publicKey);
+
+        Assert.Throws<ArgumentException>(() => Pkcs.DecodeSubjectPublicKeyInfo(spkiWithNullParams));
+    }
+
+    [Fact]
+    public void DecodeSubjectPublicKeyInfo_WithNonMinimalLength_ShouldThrow()
+    {
+        var (publicKey, _, _) = Ed25519.GenerateKeypair();
+        byte[] spki = Pkcs.EncodeSubjectPublicKeyInfo(publicKey);
+        byte[] nonMinimal = EncodeWithNonMinimalOuterLength(spki);
+
+        Assert.Throws<ArgumentException>(() => Pkcs.DecodeSubjectPublicKeyInfo(nonMinimal));
+    }
+
+    [Fact]
+    public void DecodeSubjectPublicKeyInfo_WithTruncatedLengthOrValue_ShouldThrow()
+    {
+        var (publicKey, _, _) = Ed25519.GenerateKeypair();
+        byte[] spki = Pkcs.EncodeSubjectPublicKeyInfo(publicKey);
+
+        byte[] truncatedValue = spki[..^1];
+        Assert.Throws<ArgumentException>(() => Pkcs.DecodeSubjectPublicKeyInfo(truncatedValue));
+
+        byte[] truncatedByDeclaredLength = spki.ToArray();
+        truncatedByDeclaredLength[1]++;
+        Assert.Throws<ArgumentException>(() => Pkcs.DecodeSubjectPublicKeyInfo(truncatedByDeclaredLength));
+    }
+
+    [Fact]
     public void DecodePkcs8PrivateKey_WithWrongOid_ShouldThrow()
     {
         var (_, _, seed) = Ed25519.GenerateKeypair();
@@ -350,6 +394,75 @@ public class Ed25519Tests
         pkcs8[idx + 2] ^= 0x01; // flip one byte of the OID payload
 
         Assert.Throws<ArgumentException>(() => Pkcs.DecodePkcs8PrivateKey(pkcs8));
+    }
+
+    [Fact]
+    public void DecodePkcs8PrivateKey_WithTrailingBytes_ShouldThrow()
+    {
+        var (_, _, seed) = Ed25519.GenerateKeypair();
+        byte[] pkcs8 = Pkcs.EncodePkcs8PrivateKey(seed);
+        byte[] withTrailingByte = [.. pkcs8, 0x00];
+
+        Assert.Throws<ArgumentException>(() => Pkcs.DecodePkcs8PrivateKey(withTrailingByte));
+    }
+
+    [Fact]
+    public void DecodePkcs8PrivateKey_WithNullParameters_ShouldThrow()
+    {
+        var (_, _, seed) = Ed25519.GenerateKeypair();
+        byte[] pkcs8WithNullParams = EncodePkcs8WithNullParameters(seed);
+
+        Assert.Throws<ArgumentException>(() => Pkcs.DecodePkcs8PrivateKey(pkcs8WithNullParams));
+    }
+
+    [Fact]
+    public void DecodePkcs8PrivateKey_WithNonMinimalLength_ShouldThrow()
+    {
+        var (_, _, seed) = Ed25519.GenerateKeypair();
+        byte[] pkcs8 = Pkcs.EncodePkcs8PrivateKey(seed);
+        byte[] nonMinimal = EncodeWithNonMinimalOuterLength(pkcs8);
+
+        Assert.Throws<ArgumentException>(() => Pkcs.DecodePkcs8PrivateKey(nonMinimal));
+    }
+
+    [Fact]
+    public void DecodePkcs8PrivateKey_WithTruncatedLengthOrValue_ShouldThrow()
+    {
+        var (_, _, seed) = Ed25519.GenerateKeypair();
+        byte[] pkcs8 = Pkcs.EncodePkcs8PrivateKey(seed);
+
+        byte[] truncatedValue = pkcs8[..^1];
+        Assert.Throws<ArgumentException>(() => Pkcs.DecodePkcs8PrivateKey(truncatedValue));
+
+        byte[] truncatedByDeclaredLength = pkcs8.ToArray();
+        truncatedByDeclaredLength[1]++;
+        Assert.Throws<ArgumentException>(() => Pkcs.DecodePkcs8PrivateKey(truncatedByDeclaredLength));
+    }
+
+    [Fact]
+    public void DecodePem_WithMalformedBoundaries_ShouldThrow()
+    {
+        var (publicKey, _, _) = Ed25519.GenerateKeypair();
+        string pem = Pkcs.ExportPublicKeyPem(publicKey);
+
+        string malformedBegin = pem.Replace("-----BEGIN PUBLIC KEY-----", "----BEGIN PUBLIC KEY-----", StringComparison.Ordinal);
+        Assert.Throws<ArgumentException>(() => Pkcs.DecodePem(malformedBegin, "PUBLIC KEY"));
+
+        string malformedEnd = pem.Replace("-----END PUBLIC KEY-----", "-----END PUBLIC KEY----", StringComparison.Ordinal);
+        Assert.Throws<ArgumentException>(() => Pkcs.DecodePem(malformedEnd, "PUBLIC KEY"));
+    }
+
+    [Fact]
+    public void DecodePem_WithSurroundingJunk_ShouldThrow()
+    {
+        var (publicKey, _, _) = Ed25519.GenerateKeypair();
+        string pem = Pkcs.ExportPublicKeyPem(publicKey);
+
+        string withLeadingJunk = $"junk{Environment.NewLine}{pem}";
+        Assert.Throws<ArgumentException>(() => Pkcs.DecodePem(withLeadingJunk, "PUBLIC KEY"));
+
+        string withTrailingJunk = $"{pem}{Environment.NewLine}junk";
+        Assert.Throws<ArgumentException>(() => Pkcs.DecodePem(withTrailingJunk, "PUBLIC KEY"));
     }
 
     [Fact]
@@ -385,5 +498,57 @@ public class Ed25519Tests
         Assert.True(Pkcs.VerifyPkcs10CertificationRequest(csrDer, out byte[] recoveredSubjectDer, out byte[] recoveredPublicKey));
         Assert.Equal(subjectNameDer, recoveredSubjectDer);
         Assert.Equal(publicKey, recoveredPublicKey);
+    }
+
+    private static byte[] EncodeSpkiWithNullParameters(ReadOnlySpan<byte> publicKey)
+    {
+        var writer = new AsnWriter(AsnEncodingRules.DER);
+        using (writer.PushSequence())
+        {
+            using (writer.PushSequence())
+            {
+                writer.WriteObjectIdentifier("1.3.101.112");
+                writer.WriteNull();
+            }
+
+            writer.WriteBitString(publicKey);
+        }
+
+        return writer.Encode();
+    }
+
+    private static byte[] EncodePkcs8WithNullParameters(ReadOnlySpan<byte> seed)
+    {
+        var innerPrivateKey = new AsnWriter(AsnEncodingRules.DER);
+        innerPrivateKey.WriteOctetString(seed);
+
+        var writer = new AsnWriter(AsnEncodingRules.DER);
+        using (writer.PushSequence())
+        {
+            writer.WriteInteger(0);
+            using (writer.PushSequence())
+            {
+                writer.WriteObjectIdentifier("1.3.101.112");
+                writer.WriteNull();
+            }
+
+            writer.WriteOctetString(innerPrivateKey.Encode());
+        }
+
+        return writer.Encode();
+    }
+
+    private static byte[] EncodeWithNonMinimalOuterLength(ReadOnlySpan<byte> der)
+    {
+        Assert.True(der.Length >= 2);
+        Assert.True(der[0] == 0x30);
+        Assert.True(der[1] < 0x80);
+
+        byte[] nonMinimal = new byte[der.Length + 1];
+        nonMinimal[0] = der[0];
+        nonMinimal[1] = 0x81;
+        nonMinimal[2] = der[1];
+        der[2..].CopyTo(nonMinimal.AsSpan(3));
+        return nonMinimal;
     }
 }
