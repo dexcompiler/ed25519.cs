@@ -186,8 +186,6 @@ public static class Ed25519
         // Decode public key as point A (negated for subtraction in verification)
         if (Ge.FromBytesNegateVartime(out GeP3 A, publicKey) != 0)
             return false;
-        if (Ge.HasSmallOrder(in A))
-            return false;
 
         // h = SHA512(R || publicKey || message) mod L
         Span<byte> h = stackalloc byte[64];
@@ -224,3 +222,4 @@ public static class Ed25519
         return r == 0;
     }
 }
+

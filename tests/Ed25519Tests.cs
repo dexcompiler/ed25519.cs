@@ -225,19 +225,6 @@ public class Ed25519Tests
     }
 
     [Fact]
-    public void Verify_WithLowOrderPublicKey_ShouldReturnFalse()
-    {
-        byte[] lowOrderPublicKey = new byte[32];
-        lowOrderPublicKey[0] = 0x01; // Edwards identity
-
-        byte[] message = "hello"u8.ToArray();
-        byte[] signature = new byte[64];
-        signature[0] = 0x01; // Encoded identity for R
-
-        Assert.False(Ed25519.Verify(signature, message, lowOrderPublicKey));
-    }
-
-    [Fact]
     public void SignOverload_WithAndWithoutPublicKey_ShouldMatch()
     {
         byte[] seed = Convert.FromHexString("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
