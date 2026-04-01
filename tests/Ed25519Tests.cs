@@ -14,6 +14,14 @@ namespace Ed25519.Tests;
 /// </summary>
 public class Ed25519Tests
 {
+    private static readonly byte[] ScalarOrderL =
+    [
+        0xED, 0xD3, 0xF5, 0x5C, 0x1A, 0x63, 0x12, 0x58,
+        0xD6, 0x9C, 0xF7, 0xA2, 0xDE, 0xF9, 0xDE, 0x14,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10
+    ];
+
     // RFC 8032 Section 7.1 - TEST 1
     // SECRET KEY: 9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60
     // PUBLIC KEY: d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a
@@ -215,6 +223,49 @@ public class Ed25519Tests
     }
 
     [Fact]
+    public void Verify_WithSExactlyL_ShouldReturnFalse()
+    {
+        byte[] lowOrderPublicKey = new byte[32];
+        lowOrderPublicKey[0] = 0x01; // Edwards identity
+
+        byte[] signature = new byte[64];
+        signature[0] = 0x01; // Encoded identity for R
+        ScalarOrderL.CopyTo(signature.AsSpan(32, 32));
+
+        Assert.False(Ed25519.Verify(signature, "m"u8, lowOrderPublicKey));
+    }
+
+    [Fact]
+    public void Verify_WithSGreaterThanL_ShouldReturnFalse()
+    {
+        byte[] lowOrderPublicKey = new byte[32];
+        lowOrderPublicKey[0] = 0x01; // Edwards identity
+
+        byte[] signature = new byte[64];
+        signature[0] = 0x01; // Encoded identity for R
+        ScalarOrderL.CopyTo(signature.AsSpan(32, 32));
+        signature[32]++; // S = L + 1
+
+        Assert.False(Ed25519.Verify(signature, "m"u8, lowOrderPublicKey));
+    }
+
+    [Fact]
+    public void Verify_WithValidSignatureMutatedByAddingLToS_ShouldReturnFalse()
+    {
+        var (publicKey, privateKey, _) = Ed25519.GenerateKeypair();
+        byte[] message = "malleability-check"u8.ToArray();
+        byte[] signature = Ed25519.Sign(message, publicKey, privateKey);
+
+        byte[] mutated = signature.ToArray();
+        AddLittleEndian(mutated.AsSpan(32, 32), ScalarOrderL);
+
+        if ((mutated[63] & 0b1110_0000) == 0)
+        {
+            Assert.False(Ed25519.Verify(mutated, message, publicKey));
+        }
+    }
+
+    [Fact]
     public void Verify_WithInvalidPublicKeyEncoding_ShouldReturnFalse()
     {
         // 0xFF.. is extremely unlikely to represent a valid curve point encoding.
@@ -239,6 +290,23 @@ public class Ed25519Tests
     }
 
     [Fact]
+    public void Verify_WithOversizedInputs_ShouldReturnFalse()
+    {
+        var (publicKey, privateKey, _) = Ed25519.GenerateKeypair();
+        byte[] message = "oversize"u8.ToArray();
+        byte[] signature = Ed25519.Sign(message, publicKey, privateKey);
+
+        byte[] oversizedSignature = new byte[65];
+        signature.CopyTo(oversizedSignature, 0);
+
+        byte[] oversizedPublicKey = new byte[33];
+        publicKey.CopyTo(oversizedPublicKey, 0);
+
+        Assert.False(Ed25519.Verify(oversizedSignature, message, publicKey));
+        Assert.False(Ed25519.Verify(signature, message, oversizedPublicKey));
+    }
+
+    [Fact]
     public void SignOverload_WithAndWithoutPublicKey_ShouldMatch()
     {
         byte[] seed = Convert.FromHexString("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
@@ -253,6 +321,38 @@ public class Ed25519Tests
 
         Assert.Equal(sig1, sig2);
         Assert.True(Ed25519.Verify(sig1, message, publicKey));
+    }
+
+    [Fact]
+    public void CreateKeypair_WithUndersizedOrOversizedInputs_ShouldThrow()
+    {
+        byte[] seed = new byte[Ed25519.SeedSize];
+        byte[] publicKey = new byte[Ed25519.PublicKeySize];
+        byte[] privateKey = new byte[Ed25519.PrivateKeySize];
+
+        Assert.Throws<ArgumentException>(() => Ed25519.CreateKeypair(publicKey.AsSpan(0, 31), privateKey, seed));
+        Assert.Throws<ArgumentException>(() => Ed25519.CreateKeypair(new byte[33], privateKey, seed));
+        Assert.Throws<ArgumentException>(() => Ed25519.CreateKeypair(publicKey, privateKey.AsSpan(0, 63), seed));
+        Assert.Throws<ArgumentException>(() => Ed25519.CreateKeypair(publicKey, new byte[65], seed));
+        Assert.Throws<ArgumentException>(() => Ed25519.CreateKeypair(publicKey, privateKey, seed.AsSpan(0, 31)));
+        Assert.Throws<ArgumentException>(() => Ed25519.CreateKeypair(publicKey, privateKey, new byte[33]));
+    }
+
+    [Fact]
+    public void Sign_WithUndersizedOrOversizedInputs_ShouldThrow()
+    {
+        var (publicKey, privateKey, _) = Ed25519.GenerateKeypair();
+        byte[] message = "size-check-sign"u8.ToArray();
+
+        Assert.Throws<ArgumentException>(() => Ed25519.Sign(new byte[63], message, publicKey, privateKey));
+        Assert.Throws<ArgumentException>(() => Ed25519.Sign(new byte[65], message, publicKey, privateKey));
+        Assert.Throws<ArgumentException>(() => Ed25519.Sign(new byte[64], message, publicKey.AsSpan(0, 31), privateKey));
+        Assert.Throws<ArgumentException>(() => Ed25519.Sign(new byte[64], message, new byte[33], privateKey));
+        Assert.Throws<ArgumentException>(() => Ed25519.Sign(new byte[64], message, publicKey, privateKey.AsSpan(0, 63)));
+        Assert.Throws<ArgumentException>(() => Ed25519.Sign(new byte[64], message, publicKey, new byte[65]));
+
+        Assert.Throws<ArgumentException>(() => Ed25519.Sign(new byte[64], message, privateKey.AsSpan(0, 63)));
+        Assert.Throws<ArgumentException>(() => Ed25519.Sign(new byte[64], message, new byte[65]));
     }
 
     [Fact]
@@ -485,6 +585,54 @@ public class Ed25519Tests
     }
 
     [Fact]
+    public void ExportEncryptedPrivateKeyPem_ObsoleteOverload_ShouldMatchNewOverload()
+    {
+        var (publicKey, _, seed) = Ed25519.GenerateKeypair();
+        const string password = "migration-check-password";
+
+#pragma warning disable CS0618
+        string oldPem = Pkcs.ExportEncryptedPrivateKeyPem(seed, publicKey, password, iterations: 1_000);
+#pragma warning restore CS0618
+        string newPem = Pkcs.ExportEncryptedPrivateKeyPem(seed, password, iterations: 1_000);
+
+        byte[] oldDer = Pkcs.DecodePem(oldPem, "ENCRYPTED PRIVATE KEY");
+        byte[] newDer = Pkcs.DecodePem(newPem, "ENCRYPTED PRIVATE KEY");
+
+        var oldInfo = Pkcs8PrivateKeyInfo.DecryptAndDecode(password, oldDer, out _);
+        var newInfo = Pkcs8PrivateKeyInfo.DecryptAndDecode(password, newDer, out _);
+        Assert.Equal(Pkcs.DecodePkcs8PrivateKey(oldInfo.Encode()), Pkcs.DecodePkcs8PrivateKey(newInfo.Encode()));
+    }
+
+    [Fact]
+    public void VerifyPkcs10CertificationRequest_WithTamperedSignature_ShouldReturnFalse()
+    {
+        var (publicKey, privateKey, _) = Ed25519.GenerateKeypair();
+        byte[] subjectNameDer = new X500DistinguishedName("CN=tamper-check").RawData;
+        byte[] csrDer = Pkcs.EncodePkcs10CertificationRequest(subjectNameDer, publicKey, privateKey);
+
+        byte[] tampered = csrDer.ToArray();
+        tampered[^1] ^= 0x01;
+
+        Assert.False(Pkcs.VerifyPkcs10CertificationRequest(tampered, out _, out _));
+    }
+
+    [Fact]
+    public void VerifyPkcs10CertificationRequest_WithWrongAlgorithmOid_ShouldReturnFalse()
+    {
+        var (publicKey, privateKey, _) = Ed25519.GenerateKeypair();
+        byte[] subjectNameDer = new X500DistinguishedName("CN=oid-check").RawData;
+        byte[] csrDer = Pkcs.EncodePkcs10CertificationRequest(subjectNameDer, publicKey, privateKey);
+
+        byte[] tampered = csrDer.ToArray();
+        // OID encoding in CSR: 06 03 2B 65 70. Corrupt payload byte.
+        int oidIndex = Array.IndexOf(tampered, (byte)0x06);
+        Assert.True(oidIndex >= 0);
+        tampered[oidIndex + 2] ^= 0x01;
+
+        Assert.False(Pkcs.VerifyPkcs10CertificationRequest(tampered, out _, out _));
+    }
+
+    [Fact]
     public void Pkcs10Csr_RoundTrip_VerifyAndExtract()
     {
         var (publicKey, privateKey, _) = Ed25519.GenerateKeypair();
@@ -550,5 +698,18 @@ public class Ed25519Tests
         nonMinimal[2] = der[1];
         der[2..].CopyTo(nonMinimal.AsSpan(3));
         return nonMinimal;
+    }
+
+    private static void AddLittleEndian(Span<byte> destination, ReadOnlySpan<byte> addend)
+    {
+        Assert.Equal(destination.Length, addend.Length);
+
+        int carry = 0;
+        for (int i = 0; i < destination.Length; i++)
+        {
+            int sum = destination[i] + addend[i] + carry;
+            destination[i] = (byte)sum;
+            carry = sum >> 8;
+        }
     }
 }
