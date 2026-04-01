@@ -44,19 +44,26 @@ public static class Ed25519
 
         // Hash the seed to produce the private scalar and prefix
         Span<byte> hash = stackalloc byte[64];
-        SHA512.HashData(seed[..SeedSize], hash);
+        try
+        {
+            SHA512.HashData(seed[..SeedSize], hash);
 
-        // Clamp the scalar (first 32 bytes)
-        hash[0] &= 248;
-        hash[31] &= 63;
-        hash[31] |= 64;
+            // Clamp the scalar (first 32 bytes)
+            hash[0] &= 248;
+            hash[31] &= 63;
+            hash[31] |= 64;
 
-        // Copy hash to private key
-        hash.CopyTo(privateKey);
+            // Copy hash to private key
+            hash.CopyTo(privateKey);
 
-        // Compute public key: A = [scalar] * B
-        Ge.ScalarMultBase(out GeP3 A, hash[..32]);
-        Ge.P3ToBytes(publicKey, in A);
+            // Compute public key: A = [scalar] * B
+            Ge.ScalarMultBase(out GeP3 A, hash[..32]);
+            Ge.P3ToBytes(publicKey, in A);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(hash);
+        }
     }
 
     /// <summary>
@@ -97,31 +104,39 @@ public static class Ed25519
 
         // r = SHA512(prefix || message) mod L
         Span<byte> r = stackalloc byte[64];
-        using (var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA512))
-        {
-            sha.AppendData(prefix);
-            sha.AppendData(message);
-            sha.GetHashAndReset(r);
-        }
-        Sc.Reduce(r);
-
-        // R = [r] * B
-        Ge.ScalarMultBase(out GeP3 R, r[..32]);
-        Ge.P3ToBytes(signature[..32], in R);
-
-        // h = SHA512(R || publicKey || message) mod L
         Span<byte> h = stackalloc byte[64];
-        using (var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA512))
+        try
         {
-            sha.AppendData(signature[..32]);
-            sha.AppendData(publicKey[..32]);
-            sha.AppendData(message);
-            sha.GetHashAndReset(h);
-        }
-        Sc.Reduce(h);
+            using (var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA512))
+            {
+                sha.AppendData(prefix);
+                sha.AppendData(message);
+                sha.GetHashAndReset(r);
+            }
+            Sc.Reduce(r);
 
-        // S = r + h * scalar mod L
-        Sc.MulAdd(signature[32..64], h[..32], scalar, r[..32]);
+            // R = [r] * B
+            Ge.ScalarMultBase(out GeP3 R, r[..32]);
+            Ge.P3ToBytes(signature[..32], in R);
+
+            // h = SHA512(R || publicKey || message) mod L
+            using (var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA512))
+            {
+                sha.AppendData(signature[..32]);
+                sha.AppendData(publicKey[..32]);
+                sha.AppendData(message);
+                sha.GetHashAndReset(h);
+            }
+            Sc.Reduce(h);
+
+            // S = r + h * scalar mod L
+            Sc.MulAdd(signature[32..64], h[..32], scalar, r[..32]);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(r);
+            CryptographicOperations.ZeroMemory(h);
+        }
     }
 
     /// <summary>
@@ -138,10 +153,17 @@ public static class Ed25519
 
         // Derive public key: A = [scalar] * B
         Span<byte> publicKey = stackalloc byte[PublicKeySize];
-        Ge.ScalarMultBase(out GeP3 A, privateKey[..32]);
-        Ge.P3ToBytes(publicKey, in A);
+        try
+        {
+            Ge.ScalarMultBase(out GeP3 A, privateKey[..32]);
+            Ge.P3ToBytes(publicKey, in A);
 
-        Sign(signature, message, publicKey, privateKey);
+            Sign(signature, message, publicKey, privateKey);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(publicKey);
+        }
     }
 
     /// <summary>

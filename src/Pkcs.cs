@@ -217,9 +217,9 @@ public static class Pkcs
     /// <returns>32-byte Ed25519 seed.</returns>
     public static byte[] DecodePkcs8PrivateKey(ReadOnlySpan<byte> pkcs8)
     {
+        byte[] pkcs8Bytes = pkcs8.ToArray();
         try
         {
-            byte[] pkcs8Bytes = pkcs8.ToArray();
             var reader = new AsnReader(pkcs8Bytes, AsnEncodingRules.DER);
             var seq = reader.ReadSequence();
 
@@ -272,6 +272,10 @@ public static class Pkcs
         catch (AsnContentException ex)
         {
             throw new ArgumentException("Invalid PKCS#8: malformed DER", nameof(pkcs8), ex);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(pkcs8Bytes);
         }
     }
 
@@ -402,14 +406,20 @@ public static class Pkcs
         // Use PKCS#8 PrivateKeyInfo (version 0, no publicKey field) for widest compatibility
         // with downstream PKCS#8 parsing/encryption APIs.
         byte[] pkcs8 = EncodePkcs8PrivateKey(seed);
+        try
+        {
+            // Decode PKCS#8 to a Pkcs8PrivateKeyInfo, then encrypt to EncryptedPrivateKeyInfo.
+            // This avoids having to implement PBES2 ASN.1 ourselves.
+            var info = Pkcs8PrivateKeyInfo.Decode(pkcs8, out _, skipCopy: false);
+            var pbe = new PbeParameters(PbeEncryptionAlgorithm.Aes256Cbc, HashAlgorithmName.SHA256, iterations);
+            byte[] enc = info.Encrypt(password, pbe);
 
-        // Decode PKCS#8 to a Pkcs8PrivateKeyInfo, then encrypt to EncryptedPrivateKeyInfo.
-        // This avoids having to implement PBES2 ASN.1 ourselves.
-        var info = Pkcs8PrivateKeyInfo.Decode(pkcs8, out _, skipCopy: false);
-        var pbe = new PbeParameters(PbeEncryptionAlgorithm.Aes256Cbc, HashAlgorithmName.SHA256, iterations);
-        byte[] enc = info.Encrypt(password, pbe);
-
-        return EncodePem("ENCRYPTED PRIVATE KEY", enc);
+            return EncodePem("ENCRYPTED PRIVATE KEY", enc);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(pkcs8);
+        }
     }
 
     /// <summary>
@@ -566,7 +576,11 @@ public static class Pkcs
 
             return Ed25519.Verify(sig, criDer, publicKey);
         }
-        catch
+        catch (AsnContentException)
+        {
+            return false;
+        }
+        catch (ArgumentException)
         {
             return false;
         }
