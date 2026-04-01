@@ -473,7 +473,7 @@ public class Ed25519Tests
         const string password = "correct horse battery staple";
 
         // Keep iterations modest for test speed (still exercises PBES2/PBKDF2/AES path).
-        string encPem = Pkcs.ExportEncryptedPrivateKeyPem(seed, publicKey, password, iterations: 1_000);
+        string encPem = Pkcs.ExportEncryptedPrivateKeyPem(seed, password, iterations: 1_000);
         byte[] encDer = Pkcs.DecodePem(encPem, "ENCRYPTED PRIVATE KEY");
 
         // Decrypt using platform PKCS#8 support and then decode Ed25519 seed.

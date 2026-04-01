@@ -390,7 +390,6 @@ public static class Pkcs
     /// </remarks>
     public static string ExportEncryptedPrivateKeyPem(
         ReadOnlySpan<byte> seed,
-        ReadOnlySpan<byte> publicKey,
         ReadOnlySpan<char> password,
         int iterations = 100_000)
     {
@@ -400,8 +399,6 @@ public static class Pkcs
             throw new ArgumentOutOfRangeException(nameof(iterations), "Iterations must be > 0");
         if (seed.Length != Ed25519.SeedSize)
             throw new ArgumentException($"Seed must be {Ed25519.SeedSize} bytes", nameof(seed));
-        if (publicKey.Length != Ed25519.PublicKeySize)
-            throw new ArgumentException($"Public key must be {Ed25519.PublicKeySize} bytes", nameof(publicKey));
 
         // Use PKCS#8 PrivateKeyInfo (version 0, no publicKey field) for widest compatibility
         // with downstream PKCS#8 parsing/encryption APIs.
@@ -420,6 +417,26 @@ public static class Pkcs
         {
             CryptographicOperations.ZeroMemory(pkcs8);
         }
+    }
+
+    /// <summary>
+    /// Export an encrypted private key as PKCS#8 EncryptedPrivateKeyInfo PEM ("ENCRYPTED PRIVATE KEY").
+    /// </summary>
+    /// <remarks>
+    /// The <paramref name="publicKey"/> parameter is ignored for encrypted PKCS#8 export.
+    /// Use <see cref="ExportEncryptedPrivateKeyPem(ReadOnlySpan{byte}, ReadOnlySpan{char}, int)"/> instead.
+    /// </remarks>
+    [Obsolete("The publicKey parameter is ignored. Use ExportEncryptedPrivateKeyPem(seed, password, iterations).")]
+    public static string ExportEncryptedPrivateKeyPem(
+        ReadOnlySpan<byte> seed,
+        ReadOnlySpan<byte> publicKey,
+        ReadOnlySpan<char> password,
+        int iterations = 100_000)
+    {
+        if (publicKey.Length != Ed25519.PublicKeySize)
+            throw new ArgumentException($"Public key must be {Ed25519.PublicKeySize} bytes", nameof(publicKey));
+
+        return ExportEncryptedPrivateKeyPem(seed, password, iterations);
     }
 
     /// <summary>
