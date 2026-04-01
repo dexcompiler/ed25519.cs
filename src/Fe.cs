@@ -16,7 +16,7 @@ namespace Ed25519;
 /// t[0]+2^26*t[1]+2^51*t[2]+2^77*t[3]+2^102*t[4]+...+2^230*t[9]
 /// Limb bounds vary depending on context (see individual method docs).
 /// </summary>
-public struct Fe
+internal struct Fe
 {
     // 10 limbs representing the field element
     // Even indices (0,2,4,6,8) hold 26-bit values
