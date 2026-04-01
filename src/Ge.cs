@@ -12,7 +12,7 @@ namespace Ed25519;
 /// <summary>
 /// Projective representation: (X:Y:Z) satisfying x=X/Z, y=Y/Z
 /// </summary>
-public struct GeP2
+internal struct GeP2
 {
     public Fe X, Y, Z;
 
@@ -28,7 +28,7 @@ public struct GeP2
 /// <summary>
 /// Extended representation: (X:Y:Z:T) satisfying x=X/Z, y=Y/Z, XY=ZT
 /// </summary>
-public struct GeP3
+internal struct GeP3
 {
     public Fe X, Y, Z, T;
 
@@ -45,7 +45,7 @@ public struct GeP3
 /// <summary>
 /// Completed representation: ((X:Z),(Y:T)) satisfying x=X/Z, y=Y/T
 /// </summary>
-public struct GeP1P1
+internal struct GeP1P1
 {
     public Fe X, Y, Z, T;
 }
@@ -53,7 +53,7 @@ public struct GeP1P1
 /// <summary>
 /// Duif representation for precomputed points: (y+x, y-x, 2dxy)
 /// </summary>
-public struct GePrecomp
+internal struct GePrecomp
 {
     public Fe YPlusX, YMinusX, Xy2d;
 
@@ -71,7 +71,7 @@ public struct GePrecomp
 /// <summary>
 /// Cached representation for addition: (Y+X, Y-X, Z, 2dT)
 /// </summary>
-public struct GeCached
+internal struct GeCached
 {
     public Fe YPlusX, YMinusX, Z, T2d;
 }
@@ -79,7 +79,7 @@ public struct GeCached
 /// <summary>
 /// Group element operations on the Ed25519 curve.
 /// </summary>
-public static class Ge
+internal static class Ge
 {
     // Curve constant d = -121665/121666
     internal static readonly Fe D = new()

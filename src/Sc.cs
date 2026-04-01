@@ -13,7 +13,7 @@ namespace Ed25519;
 /// Scalar operations modulo L where L is the order of the Ed25519 base point.
 /// L = 2^252 + 27742317777372353535851937790883648493
 /// </summary>
-public static class Sc
+internal static class Sc
 {
     // L decomposed for reduction:
     // L = 2^252 + l0 + l1*2^21 + l2*2^42 + l3*2^63 + l4*2^84 + l5*2^105

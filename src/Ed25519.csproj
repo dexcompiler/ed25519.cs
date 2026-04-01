@@ -6,7 +6,6 @@
     <LangVersion>preview</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RootNamespace>Ed25519</RootNamespace>
     <AssemblyName>Ed25519</AssemblyName>
     <OutputType>Library</OutputType>
