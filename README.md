@@ -12,9 +12,13 @@ A pure C# implementation of the Ed25519 digital signature algorithm, ported from
 
 ## Installation
 
+Install from NuGet:
+
 ```bash
-dotnet add package Ed25519
+dotnet add package Dexcompiler.Ed25519
 ```
+
+> Note: This package ID is the canonical package name for this repository. The similarly named `Ed25519` package on NuGet is a different project.
 
 ## Usage
 
@@ -156,6 +160,14 @@ The implementation uses constant-time conditional moves (`CMov`, `CSwap`) to pre
 - **Curve**: Edwards curve `-x² + y² = 1 + dx²y²` where `d = -121665/121666`
 - **Base point B**: The standard Ed25519 generator
 - **Group order L**: `2²⁵² + 27742317777372353535851937790883648493`
+
+## Maintainer Release Workflow
+
+1. Set `NUGET_API_KEY` in repository secrets.
+2. Update `Version` in `src/Ed25519.csproj` for the intended release.
+3. Push a tag in `vX.Y.Z` format (for example, `v1.0.5`).
+4. GitHub Actions will build, test, pack, and publish `Dexcompiler.Ed25519` with `--skip-duplicate`.
+5. Verify package availability on nuget.org and test `dotnet add package Dexcompiler.Ed25519` in a clean project.
 
 ## License
 

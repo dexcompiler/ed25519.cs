@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      - name: Restore
+        run: dotnet restore Ed25519.sln --nologo
+
+      - name: Build
+        run: dotnet build Ed25519.sln --configuration Release --no-restore --nologo
+
+      - name: Test
+        run: dotnet test tests/Ed25519.Tests.csproj --configuration Release --no-build --nologo

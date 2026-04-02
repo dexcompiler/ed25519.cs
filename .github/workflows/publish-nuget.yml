@@ -1,0 +1,41 @@
+name: Publish NuGet
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      - name: Restore
+        run: dotnet restore Ed25519.sln --nologo
+
+      - name: Build
+        run: dotnet build Ed25519.sln --configuration Release --no-restore --nologo
+
+      - name: Test
+        run: dotnet test tests/Ed25519.Tests.csproj --configuration Release --no-build --nologo
+
+      - name: Pack
+        run: dotnet pack src/Ed25519.csproj --configuration Release --no-build --nologo -o artifacts
+
+      - name: Push to NuGet
+        run: dotnet nuget push artifacts/*.nupkg --api-key "${{ secrets.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
