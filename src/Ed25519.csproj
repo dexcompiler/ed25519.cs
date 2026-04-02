@@ -11,7 +11,7 @@
     <OutputType>Library</OutputType>
     
     <!-- NuGet Package metadata -->
-    <PackageId>Ed25519</PackageId>
+    <PackageId>Dexcompiler.Ed25519</PackageId>
     <Version>1.0.4</Version>
     <Authors>Dexter Ajoku</Authors>
     <Description>Pure C# implementation of Ed25519 digital signatures. RFC 8032 compliant, ported from ref10 reference implementation. Includes PKCS#8/SPKI/PEM key import/export.</Description>
